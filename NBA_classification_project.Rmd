@@ -1,0 +1,932 @@
+---
+title: "NBA Report"
+author: "miningAH"
+date: "2022-11-08"
+output: html_document
+---
+Word count: 3274 
+
+<style type="text/css">
+  body{
+  font-size: 12pt;
+  font-family: Arial, sans-serif;
+  letter-spacing: 1px;
+}
+</style>
+-------------------
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#clearing the environment
+rm(list = ls())
+
+#importing libraries
+library(datasets)
+library(readxl)
+library(tidyverse)
+library(stringr)
+library(DataExplorer)
+library(GGally)
+library(magrittr)
+library(ggrepel)
+library(gridExtra)
+library(tidytext)
+library(dplyr)
+library(ggplot2)
+library(Hmisc)
+library(fmsb)
+library(arsenal)
+library(lattice)
+library(reshape2) 
+library(fmsb)
+library(randomForest)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RANN)
+library(mltools)
+library(MLmetrics)
+library(rmdwc)
+
+
+# setting seed
+set.seed(0000)
+
+# read.csv(...) function call reads the data in (as a data frame) and assign the data frame to a variable named nba_logreg. The below file destination would need to be replaced with the corresponding files destination on your local machine. 
+nba_logreg <-  read.csv("C:/nba_logreg.csv")
+```
+
+
+```{r echo = FALSE, results='hide'}
+# using the rmdcount method from the rmdwc package in order to calculate the total number of words in the rmd file
+# total word count is 3274 
+rmdcount(
+  files="C:/NBA_classification_project.Rmd",
+  word = "[[:space:]]+"
+)
+```
+
+
+## **Abstract**
+This report discusses the development of a classification model based on an NBA dataset containing player performance during their first year in the league. The final model will be applied onto an unseen dataset to predict whether players would continue to play in the league for 5 or more years. 
+This model is important as knowing this information will aid decision making related to whether or not to keep individual players. 
+
+---------------------------------------------------------------------------
+
+## **Introduction to the NBA**
+The NBA is the premier league within club basketball:
+
+* The league contains ~30 teams each with a player roster of ~20 players.
+
+---------------------------------------------------------------------------
+
+## **Introduction to the data set (nba_logreg)**
+The nba_logreg data set is in csv format:
+
+* It contains player data for 1340 players across a number of years in the NBA. 
+* It shows summarized data of their performance in their first year in the league. 
+* It contains the TARGET_5Yrs class attribute which shows whether or not players have played in the league for 5 yrs.
+* It contains 19 prediction features which can be used to develop/learn the classification model
+* The majority of the data is continuous data.
+
+---------------------------------------------------------------------------
+
+## **Problem Investigation Methodology**
+
+Process of Investigation:
+
+* Initial exploratory data analysis to eyeball the data from various perspectives. The goal being to leverage the human ability to spot useful patterns, as well as, any data issues. Analysis will be complemented by visualisations were appropriate.
+* Development of a minimum benchmark model to determine the minimum level of performance that the final model has to be better than. Any model under performing this minimum benchmark  will be dismissed as insufficient and poor performing. 
+* Next data pre-processing will be carried out to ensure any issues with the data are resolved. Such as missing data, duplicates and so on.
+* Pre-processed data will then be used in the development of several basic models which will be compared in terms of performance. A single model will be selected for refinement and tuning.
+* The tuned final model will be used in order to predict the class feature (TARGET_5Yrs) for an unseen dataset.
+
+---------------------------------------------------------------------------
+
+## **Exploratory Data Analysis**
+
+### *Initial exploration*
+
+To begin with, the raw dataset was skimmed through by eye in order to see if any patterns can be spotted
+
+```{r echo=FALSE}
+# view function call to view the entire dataset. 
+view(nba_logreg)
+```
+Observations found whilst eyeballing the entire dataset:
+
+* The read function call into r-studio has caused several features to be renamed. For instance, features starting with a number have an added (X) before them (such as 3PA becoming X3PA). As part of feature engineering this would need to be addressed.
+* The dataset contains numeric decimal values to represent player performance for nearly all features. We can learn from this value that these features are not representing counted values. 
+* The dataset contains the following three columns representing player performance in terms of a percentage (FG%, 3P% and FT%). The values for these 3 features are much higher than the other numerically represented features. This lack of consistency in terms of measurement scale would need to be addressed. the data. three points attempted.
+
+---------------------------------------------------------------------------
+
+### *Data Glimpse*
+A glimpse of the data set reveals the following information:
+```{r echo = FALSE, results='hide'}
+# glimpse function call to see every column in a data frame and a handful of values in them. 
+glimpse(nba_logreg) 
+```
+
+* The data set contains 1340 observations with 21 columns. 
+* The class feature 'TARGET_5Yrs' only contains two values (either 1 or 0) but is of type double. This feature is better suited as a factor rather than a double.
+* All features are of the type double besides 'Name' which is a character and games played (GP) which is an integer. All of the features of type double have values which are to 1 decimal place. The feature 'games played' (GP) is an integer rather than a double which indicates that this column contains counted sum values. 
+* The dataset does not seem to follow a particular order by which it has been sorted. 
+* There are no clear missing data values which can be seen.
+
+---------------------------------------------------------------------------
+
+### *First and Last six records*
+
+To confirm our initial assumptions we can take a more detailed look at the first and last six records in the dataset. From this observation we can learn that:
+```{r echo = FALSE, results='hide'}
+# head function call to return the first 6 or so rows of the dataset. 
+head(nba_logreg)
+# tail function call to return the last 6 or so rows of the dataset. 
+tail(nba_logreg)
+```
+* The dataset contains duplicate records as can be seen via the final 6 records. Duplicate records can be a problem when modelling and analysing data, hence will require investigation and resolving.
+
+---------------------------------------------------------------------------
+
+### *Attacking players versus defensive players*
+
+* The features included in the dataset seem to cover all key aspects of player performance, accounting for positional variance. Features exist to measure defensive performance and offensive performance. Ideally the model should account for this variance in player positioning and how it skews the data. for example, a defensive player may be considered to have played poorly if only attacking variables are considered.  
+
+```{r echo = FALSE, results='hide'}
+#summary call to produce result summaries of the dataset.
+summary(nba_logreg)
+```
+Looking at a summary of the dataset we can learn:
+
+* There is a clear positional element present in the dataset. Many features have a minimum value of 0. This likely indicates that depending on the players position they may not be involved in a particular aspect of the basketball match. 
+
+```{r echo = FALSE, results='hide'}
+# new data frame named 'cor_nba_logreg' assigned 7 columns from the 'nba_logreg' dataset.
+cor_nba_logreg = select(nba_logreg, 'AST','X3P.Made','X3PA','STL','BLK','TOV', 'REB')
+#new data frame. plot function used to plot correlation between the 7 columns that the data frame contains
+plot_correlation(cor_nba_logreg)
+```
+
+The correlation matrix above supports this hypothesis:
+
+* There is a clear correlation between attacking features such as 'three points made' (3P Made) & 'three points attempted' (3PA). This shows that a player who is focused on trying to help make three points is also trying to score them themselves.
+* There is evidence of negative correlation between the attacking feature and the defensive feature. A clear example of this is the negative correlation between 'blocks' (BLK) & 'three points attempted' (3PA), 'three points made' (3P Made) and 'assists' (AST) . This shows that a player who is focused on trying to make blocks is not focused on trying to create assists or in making/scoring three points.
+
+---------------------------------------------------------------------------
+
+## **Classification Benchmark Model**
+
+This section outlines benchmark models development for answering the problem statement and contains three main sections:
+
+1. a minimum benchmark model
+2. the development of several basic models
+3. comparing the basic models and selecting one for further development
+
+---------------------------------------------------------------------------
+
+### **Minimum Benchmark Model**
+
+As a minimum benchmark we will assume that everyone in the dataset would reach the 5 years mark in the NBA. Applying this assumption to the original dataset allows us to correctly guess 831 out of 1340 observations. Therefore the minimum benchmark model developed out of this assumption has an 61.25% accuracy.
+
+```{r echo = FALSE, results='hide'}
+baseline <- nba_logreg #new data frame - copy of original data set
+baseline$TARGET_5Yrs = as.factor(nba_logreg$TARGET_5Yrs) # class attribute changed to factor
+plot(baseline$TARGET_5Yrs) # view the new data set as a plot based on the class attribute
+table(baseline$TARGET_5Yrs) # view the new data set as a table based on the class attribute
+```
+
+Any model under the benchmark of 61.257% will be dismissed.
+
+------------------------------------------------------------------------
+
+### **Basic Model Comparisons**
+
+With a benchmark level of accuracy defined, four basic models will be developed and  there results compared using a holdout test and validation set. 
+
+Test sets are usually used to test changes to the model whilst the validation is utilized a single time. For these simple models both the test and validation holdout data sets will be used a single time.
+
+Many holdout sets are dynamically defined however for these basic models the splits have been hard coded to ensure the easily repeatable results.
+
+The main metric for assessing the performance of each model will be the F1 score. 
+
+* F1 score measures a model's accuracy by utilizing the precision and recall scores of the model.
+* It is calculated via the following formula: F1 Score = 2 * (Precision * Recall) / (Precision + Recall)
+* The accuracy value will be presented so that it can be compared to the baseline. However the F1 score is a better metric for performance measurement for this problem as accuracy does not consider data distribution. On the other hand, the F1 metric takes into account data distribution. For example, a model developed for a dataset in which 90% of players played over 5 years can easily achieve a high accuracy score by predicting all players played over 5 years. As a result the model has a 90% accuracy score. This seems good, however this performance metric does not consider how bad the model performed in predicting that a player would not play past for 5yrs, in which case the score would have been 10%. The F1 score accounts for both.
+
+To ensure testing is carried out on generalized data and not the training data the holdout method is used to split the data into training, test and validation sets
+
+```{r echo = FALSE}
+# Using the holdout method to split the data into training and validation sets
+# 80 % training. 10% test. 10% validation.
+nba_logreg_benchmarkTrainingData <- nba_logreg[1:1072,]
+nba_logreg_benchmarkTestData <- nba_logreg[1073:1206,]
+nba_logreg_benchmarkValidationData <- nba_logreg[1207:1340,]
+```
+
+#### **Decision Tree Regression Baseline Model:**
+                                                                                                
+A basic decision tree model considering all predictor features in the dataset and a max depth of one resulted in the following performance scores:
+                                                                                                
+```{r echo = FALSE, results='hide'}
+decisionTreeBaselineAll <- nba_logreg_benchmarkTrainingData
+
+decisionTreeBaselineAll$TARGET_5Yrs <- as.factor(decisionTreeBaselineAll$TARGET_5Yrs)
+
+decisionTreeBaseline <-rpart(TARGET_5Yrs~GP + MIN + PTS + AST + FGM + FGA + FG.  + X3P.Made+ X3PA + X3P. + FTM + FTA + FT. + REB + OREB + DREB + STL + BLK + TOV, 
+                             maxdepth=1, # set max depth
+                             data = decisionTreeBaselineAll) #data set
+                                                                                                
+prp(decisionTreeBaseline, space =4, split.cex=1.2, nn.border.col=0) # Plotting the decision tree
+
+#testing the test dataset
+nba_logreg_benchmarkTestData$TARGET_5Yrs <- as.factor(nba_logreg_benchmarkTestData$TARGET_5Yrs)
+train_predDTt <- predict(decisionTreeBaseline,
+                      newdata = nba_logreg_benchmarkTestData, 
+                      type="class") # return class predictions
+# Confusion matrix for test set predictions
+confusionMatrix(factor(train_predDTt),factor(nba_logreg_benchmarkTestData$TARGET_5Yrs), mode = "everything")
+
+#testing the validation dataset
+nba_logreg_benchmarkValidationData$TARGET_5Yrs <- as.factor(nba_logreg_benchmarkValidationData$TARGET_5Yrs)
+train_predDTv <- predict(decisionTreeBaseline,
+                      newdata = nba_logreg_benchmarkValidationData, 
+                      type="class") # return class predictions
+# Confusion matrix for validation set predictions
+confusionMatrix(factor(train_predDTv),factor(nba_logreg_benchmarkValidationData$TARGET_5Yrs), mode = "everything")
+                                                                                                
+```
+
+```{r echo=FALSE, message=FALSE, warnings=FALSE, results='asis'}
+DTtable <- "
+| Decision Tree  | Accuracy Score | F1 Score  |
+|----------------|:--------------:|----------:|
+| Test set       | 60.45          | 53.10     |
+| Validation set | 65.67          | 56.60     |
+"
+cat(DTtable) # output the table in a format good for HTML/PDF/docx conversion
+```
+
+#### **Naive Bayes Baseline Model:**
+
+A basic Naive Bayes tree model considering all predictor features resulted in the following performance scores:
+
+```{r echo = FALSE, results='hide'}
+nbBaselineAll <- nba_logreg_benchmarkTrainingData
+
+nbBaselineAll$TARGET_5Yrs <- as.factor(nbBaselineAll$TARGET_5Yrs) # change class attribute to factor
+
+nbBaselineAlldone = nbBaselineAll[rowSums(is.na(nbBaselineAll))<= 0,] #remove missing observations
+
+
+nbBaseline <-train(TARGET_5Yrs~GP + MIN + PTS + AST + FGM + FGA + FG.  + X3P.Made+ X3PA + X3P. + FTM + FTA + FT. + REB + OREB + DREB + STL + BLK + TOV, 
+                             data = nbBaselineAlldone, # data set
+                             method="naive_bayes") # model type
+                                                                                                
+#testing the test dataset
+nba_logreg_benchmarkTestData$TARGET_5Yrs <- as.factor(nba_logreg_benchmarkTestData$TARGET_5Yrs)
+train_predNBt <- predict(nbBaseline,
+                      newdata = nba_logreg_benchmarkTestData)
+# Confusion matrix for test set predictions
+confusionMatrix(factor(train_predNBt),factor(nba_logreg_benchmarkTestData$TARGET_5Yrs), mode = "everything")
+
+#testing the validation dataset
+nba_logreg_benchmarkValidationData$TARGET_5Yrs <- as.factor(nba_logreg_benchmarkValidationData$TARGET_5Yrs)
+train_predDTv <- predict(nbBaseline,
+                      newdata = nba_logreg_benchmarkValidationData, 
+                      type="raw")
+# Confusion matrix for validation set predictions
+confusionMatrix(factor(train_predNBt),factor(nba_logreg_benchmarkValidationData$TARGET_5Yrs), mode = "everything")
+                                                                                                
+```
+
+```{r echo=FALSE, message=FALSE, warnings=FALSE, results='asis'}
+NBtable <- "
+| Naive Bayes    | Accuracy Score | F1 Score  |
+|----------------|:--------------:|----------:|
+| Test set       | 64.93          | 51.55     |
+| Validation set | 47.01          | 31.07     |
+"
+cat(NBtable) # output the table in a format good for HTML/PDF/docx conversion
+```
+                                                                            
+#### **Logistic Regression Baseline Model:**
+
+A basic logistical regression model considering all predictor features in the dataset resulted in the following performance scores:
+ 
+
+```{r echo = FALSE, results='hide'}
+logistRegressionBenchmarkAll <- nba_logreg_benchmarkTrainingData
+logistRegressionBenchmarkAll$TARGET_5Yrs <- as.factor(logistRegressionBenchmarkAll$TARGET_5Yrs) # change class attribute to factor
+logistRegressionBenchmarkAll = logistRegressionBenchmarkAll[rowSums(is.na(logistRegressionBenchmarkAll))<= 0,] # remove missing observations
+
+logistRegressionBenchmarkModel <- train(TARGET_5Yrs ~ GP + MIN + PTS + AST + FGM + FGA + FG.  + X3P.Made+ X3PA + X3P. + FTM + FTA + FT. + REB + OREB + DREB + STL + BLK + TOV,
+                                    data=logistRegressionBenchmarkAll, # Data set
+                                    method="glm", # Model type
+                                    family="binomial") 
+
+summary(logistRegressionBenchmarkModel)
+
+#testing the test dataset
+train_predLRt <- predict(logistRegressionBenchmarkModel,
+                      newdata = nba_logreg_benchmarkTestData, # Data set
+                      type="raw")
+# Confusion matrix for test set predictions
+confusionMatrix(factor(train_predLRt),factor(nba_logreg_benchmarkTestData$TARGET_5Yrs), mode = "everything")
+
+#testing the validation dataset
+train_predLRv <- predict(logistRegressionBenchmarkModel,
+                      newdata = nba_logreg_benchmarkValidationData, # Data set
+                      type="raw")
+# Confusion matrix for validation set predictions
+confusionMatrix(factor(train_predLRv),factor(nba_logreg_benchmarkValidationData$TARGET_5Yrs), mode = "everything")
+
+```
+
+```{r echo=FALSE}
+summary(logistRegressionBenchmarkModel)
+```
+
+From the summary above we can see that the only 5 attributes are deemed statistically significant. They are: 'games played', 'three points attempted', 'three points made', 'blocks' and 'minutes'. The rest are deemed statistically insignificant and could potentially be removed when carrying out feature reduction.
+
+
+```{r echo=FALSE, message=FALSE, warnings=FALSE, results='asis'}
+LRtable <- "
+| Logistic Regression | Accuracy Score | F1 Score  |
+|---------------------|:--------------:|----------:|
+| Test set            | 66.42          | 51.61     |
+| Validation set      | 70.90          | 54.12     |
+"
+cat(LRtable) # output the table in a format good for HTML/PDF/docx conversion
+```
+
+#### **K Nearest Neighbor Baseline Model:**
+
+A basic K-Nearest Neighbor model considering all predictor features resulted in the following performance scores:
+
+```{r echo = FALSE, results='hide'}
+knnBenchmarkAll <- nba_logreg_benchmarkTrainingData
+knnBenchmarkAll$TARGET_5Yrs <- as.factor(knnBenchmarkAll$TARGET_5Yrs) # Change class attribute to a factor
+knnBenchmarkAll = knnBenchmarkAll[rowSums(is.na(knnBenchmarkAll))<= 0,] # remove missing observations
+
+knnBenchmarkModel <- train(TARGET_5Yrs ~ GP + MIN + PTS + AST + FGM + FGA + FG.  + X3P.Made+ X3PA + X3P. + FTM + FTA + FT. + REB + OREB + DREB + STL + BLK + TOV,
+                                    data=knnBenchmarkAll, # Data set
+                                    method="knn") # Model type
+
+#testing the test dataset - predictions
+train_predKNNt <- predict(knnBenchmarkModel,
+                      newdata = nba_logreg_benchmarkTestData, # test set
+                      type="raw") 
+# Confusion matrix for test set predictions
+confusionMatrix(factor(train_predKNNt),factor(nba_logreg_benchmarkTestData$TARGET_5Yrs), mode = "everything")
+
+#testing the validation dataset - predictions
+train_predKNNv <- predict(knnBenchmarkModel,
+                      newdata = nba_logreg_benchmarkValidationData, 
+                      type="raw")
+# Confusion matrix for validation set predictions
+confusionMatrix(factor(train_predKNNv),factor(nba_logreg_benchmarkValidationData$TARGET_5Yrs), mode = "everything")
+
+```
+
+```{r echo=FALSE, message=FALSE, warnings=FALSE, results='asis'}
+KNtable <- "
+| KNN             | Accuracy Score | F1 Score  |
+|-----------------|:--------------:|----------:|
+| Test set        | 67.16          | 52.17     |
+| Validation set  | 68.66          | 54.35     |
+"
+cat(KNtable) # output the table in a format good for HTML/PDF/docx conversion
+```
+
+#### **The Selected Model:**
+
+Comparing the prediction results from the three basic models developed we find that the K-nearest neighbor model had the best average accuracy score whilst Naive Bayes had the worst. On the other hand, the decision tree had the best F1 average score whilst Naive Bayes had the worst.
+
+```{r echo=FALSE, message=FALSE, warnings=FALSE, results='asis'}
+
+Mtable <- "
+| Model Comparison                   | Test set  | Accuracy Score | Average   |
+|------------------------------------|:---------:|:--------------:|----------:|
+| Decision Tree Accuracy Score       | 60.45     | 65.67          | 63.06     |
+| Naive Bayes Accuracy Score         | 64.93     | 47.01          | 55.97     |
+| Logistic Regression Accuracy Score | 66.42     | 70.90          | 68.66     |
+| KNN Accuracy Score                 | 67.16     | 68.66          | 67.91     |
+|                                    |           |                |           |
+| Decision Tree F1 Score             | 53.10     | 56.60          | 54.85     |
+| Naive Bayes F1 Score               | 51.55     | 31.07          | 41.31     |
+| Logistic Regression F1 Score       | 51.61     | 54.12          | 52.865    |
+| KNN F1 Score                       | 52.17     | 54.35          | 53.26     |
+"
+cat(Mtable) # output the table in a format good for HTML/PDF/docx conversion
+```
+
+Since the decision tree had the best F1 score average, and an accuracy score which was over the benchmark, a decision tree model will be developed.
+
+------------------------------------------------------------------------
+
+## **Data Pre-Processing and Feature Engineering**
+
+Before developing the selected classification model it is important that the data is pre-processed so that missing values, duplicates, incorrect class types and incomprehensible columns are removed.
+
+To do so the dataset will go through the following pre-processing steps:
+
+* Dealing with missing observations. Dealing with missing data is important as missing data, if not dealt with, could significantly effect  the conclusions that can be drawn from the dataset.
+* Dealing with duplicate observations. Duplicate data is a data quality issue which requires investigation and data cleaning if necessary. Duplicate entries is an issue as it results in an observation receiving more weight during analysis. This can cause many issues such as leading to incorrect observations. 
+
+---------------------------------------------------------------------------
+
+### *Missing Observations*
+
+An overview look at the data sets features:
+
+```{r echo = FALSE}
+# plot intro call used to show table of the types of variables in the data set and if any missing values
+plot_intro(nba_logreg)
+```
+
+* Most features are continuous variables and most columns are complete. 
+* A very small amount of observations are missing from the dataset.
+
+```{r echo = FALSE}
+# plot missing function call returns a table of the percentage of missing observations for each feature in the 'nba_logreg' dataset
+plot_missing(nba_logreg)
+```
+
+All of the missing observations belong to the three point percentage (3P%) feature. 
+
+```{r echo = FALSE, results='hide'}
+#sum function  used to show the total number of missing observations in the 'nba_logreg' dataset
+sum(is.na(nba_logreg)) 
+```
+
+When checking the sum total of missing data we find that only 11 observations are missing. Since this is a small amount of data which would not effect the overall analysis/modelling these records will be removed.
+
+```{r echo = FALSE, results='hide'}
+# removing missing observations
+# right side of assignment gets all the rows with missing values and removes them. is then assigned to a new data frame variable 'nba_logreg_droppedna'. contains the same data as the original dataset 'nba_logreg' minus the rows with missing observations.
+nba_logreg_droppedna = nba_logreg[rowSums(is.na(nba_logreg))<= 0,]
+```
+
+```{r echo = FALSE, results='hide'}
+# checking rows with missing observations are removed 
+# sum function to show  total number of missing values in the 'nba_logreg_droppedna' dataset. 0 expected for the new data frame 'nba_logreg_droppedna'
+sum(is.na(nba_logreg_droppedna)) 
+# plot missing function call returns a table of the percentage of missing observations for each feature in the 'nba_logreg_droppedna' dataset
+plot_missing(nba_logreg_droppedna)
+#The dataset is now free from missing observations
+```
+
+---------------------------------------------------------------------------
+
+### *Duplicate Observations*
+
+Investigating the total amount of duplicates present in the dataset shows that there are only 11 duplicates which exist. This is a very small amount and so can dealt with by removing these records. 
+
+```{r echo = FALSE}
+#display duplicates summary
+#sum function call used with the duplicated function call to return  total number of duplicate values in the 'nba_logreg_droppedna' dataset
+sum(duplicated(nba_logreg_droppedna))
+```
+
+```{r echo = FALSE, results='hide'}
+#display duplicates 
+#display all duplicate rows in 'nba_logreg_droppedna' dataset 
+nba_logreg_droppedna %>%
+  group_by_all() %>%
+  filter(n()>1) %>%
+  ungroup()
+```
+
+```{r echo = FALSE, results='hide'}
+# distinct function call used to return only distinct observations in the 'nba_logreg_droppedna' dataset. Is then assigned to a new data frame named 'nba_logreg_droppednaDup'. result is a new duplicate free dataset
+nba_logreg_droppednaDup = distinct(nba_logreg_droppedna)
+```
+
+```{r echo = FALSE, results='hide'}
+#check duplicates are removed
+# sum function call used with duplicated function call to return total number of duplicate values in the 'nba_logreg_droppednaDup' dataset.
+sum(duplicated(nba_logreg_droppednaDup))
+# The dataset is now free from missing observations
+```
+
+------------------------------------------------------------------------
+
+### **Feature Engineering**
+
+Feature engineering is important step pre-model development as it ensures all features are of the right type, scale and are named properly so that they are useful in answering the problem statement. 
+
+Along with feature engineering, feature reduction analysis is carried out in this section to determine which features are important for predicting the class attribute, as well as, which could potentially be removed.
+
+---------------------------------------------------------------------------
+
+### *Feature Type*
+
+Exploring feature types we can see that the data type for the class attribute 'TARGET5Years' needs to be changed to a factor as it only has two possible values.
+
+```{r echo = FALSE, results='hide'}
+# sapply function call to see what type each feature column is of.
+sapply(nba_logreg_droppednaDup, class)
+```
+
+```{r echo = FALSE, results='hide'}
+# 'as factor' function call - change TARGET_5Yrs from double to factor.
+nba_logreg_droppednaDup$TARGET_5Yrs = as.factor(nba_logreg_droppednaDup$TARGET_5Yrs)
+```
+
+```{r echo = FALSE, results='hide'}
+#Checking the data type has been changed
+#sapply function call to see TARGET_5Yrs has been changed to a factor.
+sapply(nba_logreg_droppednaDup, class)
+```
+
+---------------------------------------------------------------------------
+
+### *Feature Scale Analysis*
+
+For a consistent scale all percentage features are divided by 100 to give a decimal value instead:
+ 
+* field goal percentage
+* free throw percentage
+* three point percentage
+
+```{r echo = FALSE, results='hide'}
+# Changing feature scales
+nba_logreg_droppednaDup$FG.<-as.numeric(nba_logreg_droppednaDup$FG.)/100
+nba_logreg_droppednaDup$FT.<-as.numeric(nba_logreg_droppednaDup$FT.)/100
+nba_logreg_droppednaDup$X3P.<-as.numeric(nba_logreg_droppednaDup$X3P.)/100
+```
+
+---------------------------------------------------------------------------
+
+### *Feature Re-Naming*
+
+Renaming features so that they are easier to understand:
+
+* field goal percentage - FG. to FGp
+* free throw percentage - FT. to FTp
+* three points made - X3P.Made to threePMade
+* three point assists - X3PA to threePA
+* three point percentage - X3P. to threePp
+
+```{r echo = FALSE, results='hide'}
+# Changing feature names
+names(nba_logreg_droppednaDup)[names(nba_logreg_droppednaDup) == "FG."] <- "FGp"
+names(nba_logreg_droppednaDup)[names(nba_logreg_droppednaDup) == "FT."] <- "FTp"
+names(nba_logreg_droppednaDup)[names(nba_logreg_droppednaDup) == "X3P.Made"] <- "threePMade"
+names(nba_logreg_droppednaDup)[names(nba_logreg_droppednaDup) == "X3PA"] <- "threePA"
+names(nba_logreg_droppednaDup)[names(nba_logreg_droppednaDup) == "X3P."] <- "threePp"
+```
+
+---------------------------------------------------------------------------
+
+### *Feature Reduction Analysis*
+
+we have seen previously through logistic regression that only 5 attributes are statistically significant: 'games played', 'three points attempted', 'three points made', 'blocks' and 'minutes'. These attributes therefore could be removed.
+
+To support this course of action we can utilise the Gini Meaning Decreasing algorithm to see the importance value for each feature in relation to the class attribute:
+
+```{r echo = FALSE, results='hide'}
+
+nba_logreg_train_FeatureReduct <-randomForest(as.factor(TARGET_5Yrs)~ GP + MIN + PTS + AST + FGM + FGA + FGp  + threePMade + threePA + threePp + FTM + FTA + FTp + REB + OREB + DREB + STL + BLK + TOV, 
+                                              data = nba_logreg_droppednaDup, # Using pre-processed data
+                                              ntree = 500) # Number of trees to grow
+importance(nba_logreg_train_FeatureReduct) # view feature importance 
+varImpPlot(nba_logreg_train_FeatureReduct) # view feature importance via a scatter plot
+
+```
+
+The Gini Meaning Decreasing algorithm does not completely support the conclusions from logistical regression.
+As with both models the Games played feature is by far the most important feature for predicting the class attribute and defensive features seem to have the least overall importance.
+According to the algorithm all features have some level of importance and features such as field goals made and attempted seem to be quite important. As a result, no features will be removed at this stage. Instead feature reduction will be left to the decision trees algorithm to carry out. 
+
+---------------------------------------------------------------------------
+
+## **Decision Tree model development**
+
+To ensure testing is carried out on generalized data and not the training data the holdout method is used to split the data into training, test and validation data sets. 
+
+```{r echo = FALSE}
+#view(nba_logreg_droppednaDup) #1318
+# splitting the dataset using the holdout method into ~ 70 % training. 15% test. 15% validation.
+training_set <- nba_logreg_droppednaDup[1:923,]
+validation_set <- nba_logreg_droppednaDup[924:1122,]
+testing_set<- nba_logreg_droppednaDup[1123:1318,]
+```
+
+```{r echo = FALSE}
+##split_Model1 <- createDataPartition(y=nba_logreg_droppednaDup$TARGET_5Yrs,list = FALSE, p=0.70, times=1)
+
+#training_set <- nba_logreg_droppednaDup[split_Model1,] # Get the new training set
+#test_set <- nba_logreg_droppednaDup[-split_Model1,] # Get the validation set
+
+#nrow(training_set)/nrow(nba_logreg_droppednaDup) 
+
+
+#split_Model2 <- createDataPartition(y=test_set$TARGET_5Yrs,list = FALSE, p=0.50, times=1)
+
+#testing_set <- test_set[split_Model2,] # Get the new training set
+#validation_set <- test_set[-split_Model2,] # Get the validation set
+
+#nrow(testing_set)/nrow(test_set) 
+
+```
+
+---------------------------------------------------------------------------
+
+As a starting point, the first decision tree model will consider all features and be set to max complexity:
+
+```{r echo = FALSE, results='hide'}
+decisionTreeAll <- training_set
+
+decisionTreeAll$TARGET_5Yrs <- as.factor(decisionTreeAll$TARGET_5Yrs)  # change class attribute to a factor
+
+decisionTree1 <-rpart(TARGET_5Yrs~GP + MIN + PTS + AST + FGM + FGA + FGp  + threePMade+ threePA + threePp + FTM + FTA + FTp + REB + OREB + DREB + STL + BLK + TOV, 
+                      data = decisionTreeAll, # Using the training data
+                      cp=0.001) # Setting complexity parameter
+
+prp(decisionTree1, space =4, split.cex=1.2, nn.border.col=0) # Plotting the decision tree
+
+testing_set$TARGET_5Yrs <- as.factor(testing_set$TARGET_5Yrs)  # change class attribute to a factor
+
+train_pred1 <- predict(decisionTree1, 
+                      newdata = testing_set, # Using the test data set for class predictions
+                      type="class") # Return class predictions
+
+# Confusion matrix for predictions
+confusionMatrix(factor(train_pred1),factor(testing_set$TARGET_5Yrs), mode = "everything")
+
+```
+
+```{r echo=FALSE, message=FALSE, warnings=FALSE, results='asis'}
+Test1 <- "
+| max cp          | Accuracy Score | F1 Score  |
+|-----------------|:--------------:|----------:|
+| Testing set     | 69.39          | 56.52     |
+"
+cat(Test1) # output the table in a format good for HTML/PDF/docx conversion
+```
+
+With max complexity the decision tree cannot be read. In order to improve the balance between complexity and readability a max depth will be determined through the use of tuning.
+
+### **Model Tuning**
+
+To tune the model for max depth the cross validation method has been used. The tuning length has been set to 10 in order to test the performance of 10 different values for max depth. The F1 metric has been used for tuning, meaning that the optimal max depth for the decision tree will be based on the best F1 score achieved. 
+
+```{r echo = FALSE, results='hide'}
+decisionTreekTestCP <- training_set
+
+train_control <- trainControl(method = "repeatedcv", # Using cross validation
+                              number = 10,# Use 10 partitions
+                              repeats = 10, # Repeat the cross validation 10 times
+                              summaryFunction = prSummary, # Used for precision and recall - so that F1 score can be used as a metric
+                              classProbs =TRUE) 
+
+# change class attribute to factor
+decisionTreekTestCP$TARGET_5Yrs <- as.factor(decisionTreekTestCP$TARGET_5Yrs)
+
+# change levels from 0 and 1 to false and true for the class attribute
+levels(training_set$TARGET_5Yrs)
+levels(decisionTreekTestCP$TARGET_5Yrs) <- c("false", "true")
+
+
+validated_tree3 <- train(TARGET_5Yrs ~ GP + MIN + PTS + AST + FGM + FGA + FGp  + threePMade+ threePA + threePp + FTM + FTA + FTp + REB + OREB + DREB + STL + BLK + TOV, 
+                         tuneLength=10, #set tune length
+                         data=decisionTreekTestCP, #Data set
+                         method="rpart2", #Model type
+                         trControl= train_control, #Model control options
+                         metric = "F") #Use F1 metric
+#view performance
+validated_tree3
+
+```
+
+Tuning results: the most optimal tree depth was 1. 
+However the decision tree at a max depth of 1 would only show the games played feature. Therefore a higher level of depth will be utilized for the final model in order to make the model slightly more detailed. A max tree depth of 2 seems ideal as it is close to the optimal max depth but is also slightly more complicated. The added complexity should make the models performance improve for the unseen data set whilst not being over fitting.
+
+### **Comparing Model Split Algorithms**
+
+Decision trees implement a top-down, greedy approach (recursive binary splitting). The algorithm chooses the optimal split at each step and ignores further steps. As part of its function, the decision tree algorithm evaluates all variables based on statistical criteria to choose the variable that performs best against said criteria. To this end there are different algorithms which can be used for decision tree splitting, two of which are:
+
+1. Information gain 
+2. Gini index
+
+Below we apply both algorithms with our model to see if there is any difference in end performance results.
+
+INFORMATION GAIN:
+```{r echo = FALSE, results='hide'}
+decisionTree3 <-rpart(TARGET_5Yrs~GP + MIN + PTS + AST + FGM + FGA + FGp  + threePMade+ threePA + threePp + FTM + FTA + FTp + REB + OREB + DREB + STL + BLK + TOV, 
+                      data = decisionTreeAll, # Using the training data
+                      maxdepth=2,  # Setting max depth parameter
+                      cp=0.001, # Setting complexity parameter
+                      parms=list(split=c("information"))) # Using the Information gain algorithm
+
+prp(decisionTree3, space =4, split.cex=1.2, nn.border.col=0) # Plotting the decision tree
+
+testing_set$TARGET_5Yrs <- as.factor(testing_set$TARGET_5Yrs)  # change class attribute to a factor
+
+train_pred3 <- predict(decisionTree3, 
+                      newdata = testing_set, # Using the test data set for class predictions
+                      type="class") # Return class predictions
+
+# Confusion matrix for predictions
+confusionMatrix(factor(train_pred3),factor(testing_set$TARGET_5Yrs), mode = "everything")
+
+```
+
+```{r echo=FALSE, message=FALSE, warnings=FALSE, results='asis'}
+Test3 <- "
+| information | Accuracy Score | F1 Score  |
+|-------------|:--------------:|----------:|
+| Testing set | 68.37          | 52.31     |
+"
+cat(Test3) # output the table in a format good for HTML/PDF/docx conversion
+```
+
+GINI INDEX:
+```{r echo = FALSE, results='hide'}
+# Predict attribute class (played 5 years)
+decisionTree4 <-rpart(TARGET_5Yrs~GP + MIN + PTS + AST + FGM + FGA + FGp  + threePMade+ threePA + threePp + FTM + FTA + FTp + REB + OREB + DREB + STL + BLK + TOV, 
+                      data = decisionTreeAll, # Using the training data
+                      maxdepth =2, # Setting max depth parameter
+                      cp=0.001, # Setting complexity parameter
+                      parms=list(split=c("gini"))) # Using the Gini index algorithm
+
+prp(decisionTree4, space =4, split.cex=1.2, nn.border.col=0) # Plotting the decision tree
+
+testing_set$TARGET_5Yrs <- as.factor(testing_set$TARGET_5Yrs) # change class attribute to a factor
+
+train_pred4 <- predict(decisionTree4, 
+                      newdata = testing_set, # Using the test data set for class predictions
+                      type="class") # Return class predictions
+
+# Confusion matrix for predictions
+confusionMatrix(factor(train_pred4),factor(testing_set$TARGET_5Yrs), mode = "everything")
+
+```
+
+```{r echo=FALSE, message=FALSE, warnings=FALSE, results='asis'}
+Test4 <- "
+| information | Accuracy Score | F1 Score  |
+|-------------|:--------------:|----------:|
+| Testing set | 68.37          | 52.31     |
+"
+cat(Test4) # output the table in a format good for HTML/PDF/docx conversion
+```
+
+In conclusion there is no difference. The same F1 score result is achieved by both algorithm as both algorithms developed the same decision tree.
+
+---------------------------------------------------------------------------
+
+### **Final Model Performance**
+
+The final model contains all data set features, has a max complexity of 2 and uses the information gain algorithm for tree splitting.
+
+Performance of the final model against the holdout validation set:
+
+```{r echo = FALSE}
+
+decisionTreeTest <- training_set
+
+decisionTreeTest$TARGET_5Yrs <- as.factor(decisionTreeTest$TARGET_5Yrs) # change class attribute to a factor
+
+# Predict attribute class (played 5 years)
+finalDescisionTreeModel <- rpart(TARGET_5Yrs ~ GP + MIN + PTS + AST + FGM + FGA + FGp  + threePMade+ threePA + threePp + FTM + FTA + FTp + REB + OREB + DREB + STL + BLK + TOV,
+cp = 0.001, # Setting complexity parameter
+maxdepth=2, # Setting max depth parameter
+method = "class", # Return classifications instead of probs
+data = decisionTreeTest) # Using the training data
+options(repr.plot.width = 6, 
+        parms=list(split=c("information")), # Using the information gain algorithm
+        repr.plot.height = 6)
+
+#prp(finalDescisionTreeModel, # Plotting the decision tree
+#space=4,  # (Formatting options chosen for notebook)
+#split.cex = 1.2,
+#nn.border.col=0)
+
+finalTree_preds <- predict(finalDescisionTreeModel, 
+newdata = validation_set, # Using the validation data set for class predictions
+type = "class") # Return class predictions
+
+# Confusion matrix for predictions
+confusionMatrix(factor(finalTree_preds), factor(validation_set$TARGET_5Yrs), mode = "everything")
+#Accuracy of 0.6734
+#F1 score of 0.5806     
+
+```
+
+The confusion matrix above shows the following results
+
+* 45 true positives
+* 37 false positives
+* 28 false negatives
+* 89 true negatives
+
+Several useful performance metrics such as the models accuracy, precision, recall/sensitivity and f1 score can also be seen above.
+
+### **MCC score**
+
+To measure the quality of the final model Matthew’s correlation coefficient will be calculated.
+MCC acts as a summary of the confusion matrix and gives the model a score between -1 and 1:
+
+* A score of 1 indicates perfect agreement (-1 indicates total disagreement). 
+* Scores closer to 0 indicate the model is no better than a random guess. 
+* Scores under 0 indicates a disagreement between the prediction and observation 
+
+A model will only get a high MCC score if the predictions results were good for all four of the confusion matrix categories (true positives, true negatives, false positives and false negatives). it also considers theses reuslts in proportion to both the size of positive and negative elements in the dataset.
+
+```{r echo = FALSE}
+# Using the confusion matrix result from above to build a confusion matrix table
+conf_matrix4 <- matrix(c(45,28,37,89), nrow=2)
+conf_matrix4
+# Using the confusion matrix table to determine the MCC score
+mcc(confusionM = conf_matrix4)
+
+```
+
+The final model has an MCC score of 0.3160557 This indicates that the model is better than a random guess and therefore is useful. However, the score shows that the model is not the best as it is closer to a random guess than a well performing model.
+
+---------------------------------------------------------------------------
+
+### **Final Model submission predictions**
+
+Applying the final model to the final holdout set to make class predictions:
+
+```{r echo = FALSE, results='hide'}
+
+# read the holdout dataset
+# The below file destination would need to be replaced with the corresponding files destination on your local machine. 
+test  <-  read_xlsx("C:/DMN-TestSet.xlsx")
+
+# pre-processing the holdout dataset
+
+# changes feature names
+names(test)[names(test) == "FG%"] <- "FGp"
+names(test)[names(test) == "FT%"] <- "FTp"
+names(test)[names(test) == "3P%"] <- "threePp"
+names(test)[names(test) == "3P Made"] <- "threePMade"
+names(test)[names(test) == "3PA"] <- "threePA"
+names(test)[names(test) == "3PA"] <- "threePA"
+
+
+#checking for missing observations
+sum(is.na(test)) 
+#66 missing observations exist
+
+#imputing the 66 missing observations with the median value of the feature
+test$`threePp`[is.na(test$`threePp`)]<- median(test$`threePp`,na.rm = TRUE)
+sum(is.na(test)) 
+test$`FTp`[is.na(test$`FTp`)]<- median(test$`FTp`,na.rm = TRUE)
+sum(is.na(test))
+test$`FGp`[is.na(test$`FGp`)]<- median(test$`FGp`,na.rm = TRUE)
+sum(is.na(test))
+
+#checking for duplicate observations
+sum(duplicated(test))
+#no duplicate observations exist
+
+# Plotting the decision tree
+prp(finalDescisionTreeModel, 
+space=4,  # (Formatting options chosen for notebook)
+split.cex = 1.2,
+nn.border.col=0)
+
+# Generate predictions and save them to a file for submission
+test_preds <- predict(finalDescisionTreeModel,
+newdata=test,
+type="class") # Return class predictions
+
+prediction_sub <- data.frame(Rk=test$Rk, TARGET_5Yrs=test_preds)
+
+names(prediction_sub)[names(prediction_sub) == "TARGET_5Yrs"] <- "Predictions"
+
+
+write.csv(prediction_sub, "C:/predict.csv", row.names=FALSE)
+view(prediction_sub)
+```
+
+Estimated performance: 
+
+The performance of the final model when used to predict the final holdout set is expected to be similar (in terms of F1 score) to that of the the final model when predicting the validation set (0.5806)
+
+---------------------------------------------------------------------------
+
+## **Conclusions**
+
+To conclude, what follows is a summary of what was learnt about the data and the data mining process in general:
+
+* The data contained quality issues and needed to undergo data cleaning. This included Data pre-processing work and feature engineering. 
+* The data reveals several key insights such as how the number of games played is the most important determining factor of whether some will continue to play past 5 years after there rookie season. 
+* An interesting area for further research would be to compare the rookie seasons of retired players to current players in order to see if there are common qualities shown by a player in their first season. This would aid teams in predicting players that will player for much longer than five years and have successful careers 
+* The data mining process involves many activities from initial exploration to data modelling and testing.
+* The human ability to spot patterns and issues in data should not be underestimated. With the advancement of technology it can be difficult to rely on manual analysis however manually checking the data often works really well for initial analysis.
+
+```{r echo=FALSE}
+# Future potential improvements:
+#  1) Add a discussion about the outliers 
+#  2) Add a comparison between overall baseline performance against other developed models
+
+```
+
